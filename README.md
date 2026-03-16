@@ -1,86 +1,30 @@
-# Microservicio IA - MiDesk 🚀
+# 🧠 Microservicio IA - MiDesk
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-API%20REST-success)
-![Uvicorn](https://img.shields.io/badge/Uvicorn-ASGI-informational)
-![Status](https://img.shields.io/badge/Status-Proyecto%20Acad%C3%A9mico-yellow)
+Este repositorio contiene el microservicio de Inteligencia Artificial para **MiDesk**, un simulador de entorno de escritorio (Sistema Operativo Virtual). Está construido con **Python y FastAPI**, y actúa como el "cerebro" del sistema, permitiendo controlar la interfaz, realizar búsquedas inteligentes y personalizar el entorno visual.
 
-Microservicio en **Python + FastAPI** que expone un endpoint REST para un asistente tipo **MiDesk**.  
-El objetivo es demostrar: **API REST, prompt (System Role), parámetros y métricas**.
+## ✨ Características Principales
 
----
-
-## ✨ Características
-- Endpoint **POST `/chat`** que recibe y devuelve **JSON**
-- **System Prompt** (rol del asistente) para mantener el contexto MiDesk
-- Parámetros de generación (ej. `temperature`, `max_tokens`)
-- Métricas básicas (ej. **tiempo de respuesta** y/o conteo aproximado de tokens/palabras)
-- Documentación automática con Swagger: **`/docs`**
+1. **🤖 Bot Agente Controlador:** Analiza las intenciones del usuario en lenguaje natural y devuelve comandos estructurados en JSON (ej. `abrir` aplicaciones, `crear_nota`) para que el frontend de MiDesk reaccione dinámicamente. Desarrollado con **Google Gemini (2.5 Flash)**.
+2. **🔍 Búsqueda Semántica Inteligente:** Un buscador estilo "Spotlight" que encuentra archivos virtuales por su *significado* y contexto utilizando vectores y similitud del coseno. Desarrollado con **Gemini Embeddings (`gemini-embedding-001`)**.
+3. **🎨 Generador de Fondos de Pantalla:** Creación de imágenes panorámicas (16:9) mediante texto para personalizar el escritorio de MiDesk. Impulsado por la API de **Hugging Face (Stable Diffusion XL)**.
 
 ---
 
-## 🧰 Tecnologías
-- **Python 3.10+**
-- **FastAPI**
-- **Uvicorn**
-- (Opcional) **python-dotenv** para variables de entorno
+## 🛠️ Tecnologías Utilizadas
+
+* **Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python)
+* **Servidor ASGI:** Uvicorn
+* **Modelos de IA:** * Google GenAI SDK (Gemini 2.5 Flash / Embeddings)
+  * Hugging Face Inference API (Stable Diffusion)
+* **Gestión de Entorno:** `python-dotenv`
 
 ---
 
-## 📁 Estructura del proyecto (ejemplo)
-```txt
-microservicio-ia-python/
-├─ main.py
-├─ requirements.txt
-├─ README.md
-├─ .gitignore
-└─ venv/
-```
----
-## ⚙️ Instalación y ejecución
+## 🚀 Instalación y Configuración Local
 
-### 1) Crear y activar entorno virtual
+Sigue estos pasos para ejecutar el microservicio en tu máquina local:
 
-#### Windows (PowerShell)
+### 1. Clonar el repositorio
 ```bash
-python -m venv venv
-venv\Scripts\activate
-
-```
-### 2) Instalar dependencias
-```txt
-pip install -r requirements.txt
-```
-### 3) Ejecutar el servidor
-```txt
-uvicorn main:app --reload
-```
-### 4) Abrir documentación (Swagger)
-```txt
-http://127.0.0.1:8000/docs
-```
-## 🔌 Uso del API
-Endpoint
-```
-POST /chat
-```
-### 📥 Request (JSON)
-```
-{
-  "mensaje": "¿Cómo organizo mis tareas en MiDesk?"
-}
-```
-### 📤 Response (JSON) — ejemplo
-```
-{
-  "respuesta": "Para organizar tus tareas en MiDesk, crea listas por materia...",
-  "parametros_modelo": {
-    "temperature": 0.3,
-    "max_tokens": 300
-  },
-  "metricas": {
-    "tiempo_respuesta_ms": 12,
-    "tokens_totales_aprox": 28
-  }
-```
-
+git clone [https://github.com/TU_USUARIO/midesk-ia-backend.git](https://github.com/TU_USUARIO/midesk-ia-backend.git)
+cd midesk-ia-backend
