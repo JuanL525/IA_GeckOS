@@ -171,7 +171,7 @@ def buscar_archivos(req: BusquedaRequest):
 
         client = genai.Client(api_key=api_key)
         
-        # 1. Convertimos la búsqueda del usuario a un vector numérico (Embedding)
+        # Convertimos la búsqueda del usuario a un vector numérico (Embedding)
         respuesta_consulta = client.models.embed_content(
             model="gemini-embedding-001", 
             contents=req.consulta
@@ -180,7 +180,7 @@ def buscar_archivos(req: BusquedaRequest):
 
         resultados = []
 
-        # 2. Analizamos cada archivo del usuario
+        #  Analizamos cada archivo del usuario
         for archivo in req.archivos:
             # Combinamos el nombre y el contenido para entender mejor de qué trata
             texto_archivo = f"Título: {archivo.nombre}. Contenido: {archivo.contenido}"
@@ -192,10 +192,10 @@ def buscar_archivos(req: BusquedaRequest):
             )
             vector_archivo = respuesta_archivo.embeddings[0].values
             
-            # 3. Comparamos matemáticamente qué tan parecidos son sus significados
+            #  Comparamos matemáticamente qué tan parecidos son sus significados
             similitud = similitud_coseno(vector_consulta, vector_archivo)
             
-            # Guardamos el resultado con un porcentaje (0 a 100)
+            # Guardamos el resultado con un porcentaje
             porcentaje = round(similitud * 100, 2)
             resultados.append({
                 "id": archivo.id,
@@ -203,7 +203,7 @@ def buscar_archivos(req: BusquedaRequest):
                 "relevancia": porcentaje
             })
 
-        # 4. Ordenamos de mayor a menor relevancia
+        #  Ordenamos de mayor a menor relevancia
         resultados_ordenados = sorted(resultados, key=lambda x: x["relevancia"], reverse=True)
 
         fin = time.time()
