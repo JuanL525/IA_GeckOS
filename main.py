@@ -221,3 +221,65 @@ def buscar_archivos(req: BusquedaRequest):
             "error": "Fallo al realizar la búsqueda semántica",
             "detalle": str(e)
         }
+
+# ESTRUCTURAS PARA ANÁLISIS DE DOCUMENTOS
+class AnalisisRequest(BaseModel):
+    texto: str
+    accion: str 
+
+@app.post("/analizar-documento")
+def analizar_documento(req: AnalisisRequest):
+    inicio = time.time()
+    try:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            return {"error": "GOOGLE_API_KEY no encontrada en .env"}
+
+        client = genai.Client(api_key=api_key)
+        
+        # Prompt dinámico que cambia la personalidad de la IA según la acción requerida
+        prompt_analisis = f"""
+        Eres una herramienta de análisis de documentos del sistema MiDesk.
+        Tu tarea es aplicar la siguiente acción: '{req.accion}' sobre el texto proporcionado.
+        
+        Guía de acciones soportadas:
+        - "resumir": Crea un resumen claro y conciso del documento.
+        - "ideas_principales": Extrae los puntos clave en formato de viñetas.
+        - "mejorar_redaccion": Corrige la ortografía y dale un tono profesional.
+        - "traducir_ingles": Traduce el texto al inglés asegurando una estructura gramatical avanzada e impecable.
+        - "explicar_codigo": Analiza el fragmento de código proporcionado y explica su lógica paso a paso.
+
+        DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
+        {{
+            "resultado": "Aquí va el texto procesado final"
+        }}
+
+        Texto a procesar:
+        {req.texto}
+        """
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_analisis,
+            config=dict(
+                response_mime_type="application/json",
+                temperature=0.2 # Temperatura baja para que no invente datos del documento
+            )
+        )
+
+        respuesta_ia_json = json.loads(response.text)
+        fin = time.time()
+
+        return {
+            "mensaje": f"Análisis completado: {req.accion}",
+            "respuesta": respuesta_ia_json,
+            "metricas": {
+                "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+            }
+        }
+
+    except Exception as e:
+        return {
+            "error": "Fallo al procesar el documento",
+            "detalle": str(e)
+        }
