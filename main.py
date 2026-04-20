@@ -10,7 +10,6 @@ import math
 from typing import List
 import base64
 
-# Cargar variables de entorno
 load_dotenv()
 
 app = FastAPI(title="Microservicio IA - MiDesk (Google Gemini)")
@@ -152,7 +151,6 @@ class BusquedaRequest(BaseModel):
     consulta: str
     archivos: List[ArchivoVirtual]
 
-# --- FUNCIÓN MATEMÁTICA PARA COMPARAR SIGNIFICADOS ---
 def similitud_coseno(vec1, vec2):
     dot_product = sum(x * y for x, y in zip(vec1, vec2))
     magnitude_v1 = math.sqrt(sum(x * x for x in vec1))
@@ -171,7 +169,6 @@ def buscar_archivos(req: BusquedaRequest):
 
         client = genai.Client(api_key=api_key)
         
-        # Convertimos la búsqueda del usuario a un vector numérico (Embedding)
         respuesta_consulta = client.models.embed_content(
             model="gemini-embedding-001", 
             contents=req.consulta
@@ -180,22 +177,17 @@ def buscar_archivos(req: BusquedaRequest):
 
         resultados = []
 
-        #  Analizamos cada archivo del usuario
         for archivo in req.archivos:
-            # Combinamos el nombre y el contenido para entender mejor de qué trata
             texto_archivo = f"Título: {archivo.nombre}. Contenido: {archivo.contenido}"
             
-            # Convertimos el archivo a vector
             respuesta_archivo = client.models.embed_content(
                 model="gemini-embedding-001", 
                 contents=texto_archivo
             )
             vector_archivo = respuesta_archivo.embeddings[0].values
             
-            #  Comparamos matemáticamente qué tan parecidos son sus significados
             similitud = similitud_coseno(vector_consulta, vector_archivo)
             
-            # Guardamos el resultado con un porcentaje
             porcentaje = round(similitud * 100, 2)
             resultados.append({
                 "id": archivo.id,
@@ -203,7 +195,6 @@ def buscar_archivos(req: BusquedaRequest):
                 "relevancia": porcentaje
             })
 
-        #  Ordenamos de mayor a menor relevancia
         resultados_ordenados = sorted(resultados, key=lambda x: x["relevancia"], reverse=True)
 
         fin = time.time()
@@ -222,7 +213,6 @@ def buscar_archivos(req: BusquedaRequest):
             "detalle": str(e)
         }
 
-# ESTRUCTURAS PARA ANÁLISIS DE DOCUMENTOS
 class AnalisisRequest(BaseModel):
     texto: str
     accion: str 
@@ -237,7 +227,6 @@ def analizar_documento(req: AnalisisRequest):
 
         client = genai.Client(api_key=api_key)
         
-        # Prompt dinámico que cambia la personalidad de la IA según la acción requerida
         prompt_analisis = f"""
         Eres una herramienta de análisis de documentos del sistema MiDesk.
         Tu tarea es aplicar la siguiente acción: '{req.accion}' sobre el texto proporcionado.
@@ -263,7 +252,7 @@ def analizar_documento(req: AnalisisRequest):
             contents=prompt_analisis,
             config=dict(
                 response_mime_type="application/json",
-                temperature=0.2 # Temperatura baja para que no invente datos del documento
+                temperature=0.2
             )
         )
 
