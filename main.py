@@ -18,7 +18,7 @@ SYSTEM_PROMPT = """
 Eres el núcleo de Inteligencia Artificial de GeckOS, un sistema operativo virtual.
 Tu objetivo es analizar lo que pide el usuario y ejecutar comandos en el sistema.
 
-REGLA ESTRICTA DE CONTEXTO: Si el usuario te pregunta cosas que no tienen NADA que ver con GeckOS, organización, productividad o el uso de la PC, debes rechazar la solicitud amablemente recordando que eres el asistente de GeckOS.
+REGLA ESTRICTA DE CONTEXTO: Si el usuario te pregunta cosas que no tienen NADA que ver con GeckOS, organización, productividad o el uso del sistema, debes rechazar la solicitud amablemente.
 
 DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
 {
@@ -28,19 +28,24 @@ DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exact
     "contenido_nota": "El texto a guardar, solo si el comando es crear_nota. Vacío en otros casos."
 }
 
-Las aplicaciones disponibles en el sistema son: "notas", "calculadora", "navegador", "tareas", "terminal", "archivos".
+Las aplicaciones y herramientas disponibles en el sistema son: "notas", "calculadora", "navegador", "tareas", "terminal", "archivos", "generador_fondos", "buscador_semantico", "editor_documentos".
 
-Ejemplo 1 (Abrir):
-Usuario: "Voy a programar, ábreme la terminal"
-Respuesta: {"mensaje": "¡Entendido! Abriendo la terminal.", "comando": "abrir", "apps": ["terminal"], "contenido_nota": ""}
+Guía de comportamiento avanzado para herramientas de IA:
+- Si el usuario te pide crear, generar o dibujar un fondo de pantalla o imagen, tu comando debe ser "abrir" la app "generador_fondos".
+- Si el usuario quiere buscar un archivo por su significado o encontrar información perdida, tu comando debe ser "abrir" la app "buscador_semantico".
+- Si el usuario te pide resumir, traducir, corregir o analizar un texto largo, tu comando debe ser "abrir" la app "editor_documentos".
 
-Ejemplo 2 (Crear Nota):
-Usuario: "Anota que mañana tengo que entregar el informe de física a las 10am"
-Respuesta: {"mensaje": "¡Listo! He creado una nota con tu recordatorio para mañana.", "comando": "crear_nota", "apps": [], "contenido_nota": "Entregar informe de física mañana a las 10am"}
+Ejemplo 1 (Generar imagen):
+Usuario: "Quiero un fondo de pantalla de un bosque nevado"
+Respuesta: {"mensaje": "¡Me encanta la idea! Te abriré el Generador de Fondos para que puedas crear esa imagen.", "comando": "abrir", "apps": ["generador_fondos"], "contenido_nota": ""}
 
-Ejemplo 3 (Fuera de contexto):
-Usuario: "¿Cómo se hace una pizza?"
-Respuesta: {"mensaje": "Lo siento, soy el asistente exclusivo de MiDesk. Solo puedo ayudarte a organizar tu entorno de trabajo, crear notas o abrir aplicaciones.", "comando": "ninguno", "apps": [], "contenido_nota": ""}
+Ejemplo 2 (Buscar archivos):
+Usuario: "No encuentro el pdf de la universidad, ayúdame a buscarlo"
+Respuesta: {"mensaje": "¡No te preocupes! Abriendo el Buscador Semántico Inteligente para encontrar ese documento.", "comando": "abrir", "apps": ["buscador_semantico"], "contenido_nota": ""}
+
+Ejemplo 3 (Crear Nota):
+Usuario: "Anota que mañana tengo que comprar café"
+Respuesta: {"mensaje": "¡Listo! He creado una nota con tu recordatorio.", "comando": "crear_nota", "apps": [], "contenido_nota": "Comprar café mañana"}
 """
 
 class ChatRequest(BaseModel):
@@ -49,39 +54,42 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 def chat(req: ChatRequest):
     inicio = time.time()
-    try:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            return {"error": "GOOGLE_API_KEY no encontrada en .env"}
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return {"error": "GOOGLE_API_KEY no encontrada en .env"}
 
-        client = genai.Client(api_key=api_key)
-        prompt = f"{SYSTEM_PROMPT}\nUsuario: {req.mensaje}"
+    client = genai.Client(api_key=api_key)
+    prompt = f"{SYSTEM_PROMPT}\nUsuario: {req.mensaje}"
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=dict(
-                response_mime_type="application/json",
-                temperature=0.2 
+    max_reintentos = 3
+    for intento in range(max_reintentos):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=dict(
+                    response_mime_type="application/json",
+                    temperature=0.2 
+                )
             )
-        )
+            
+            respuesta_ia_json = json.loads(response.text)
+            fin = time.time()
 
-        respuesta_ia_json = json.loads(response.text)
-
-        fin = time.time()
-
-        return {
-            "respuesta": respuesta_ia_json,
-            "metricas": {
-                "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+            return {
+                "respuesta": respuesta_ia_json,
+                "metricas": {
+                    "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+                }
             }
-        }
 
-    except Exception as e:
-        return {
-            "error": "Fallo al generar respuesta de IA",
-            "detalle": str(e)
-        }
+        except Exception as e:
+            if intento == max_reintentos - 1:
+                return {
+                    "error": "Servidores de Google ocupados tras varios intentos",
+                    "detalle": str(e)
+                }
+            time.sleep(2)
 
 class FondoRequest(BaseModel):
     descripcion: str
