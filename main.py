@@ -170,8 +170,10 @@ def buscar_archivos(req: BusquedaRequest):
 
         client = genai.Client(api_key=api_key)
         
+        texto_consulta = f"Intención de búsqueda del usuario: {req.consulta}"
+        
         respuesta_consulta = client.models.embed_content(
-            model="gemini-embedding-001", 
+            model="gemini-embedding-001",
             contents=req.consulta
         )
         vector_consulta = respuesta_consulta.embeddings[0].values
@@ -179,17 +181,18 @@ def buscar_archivos(req: BusquedaRequest):
         resultados = []
 
         for archivo in req.archivos:
-            texto_archivo = f"Título: {archivo.nombre}. Contenido: {archivo.contenido}"
+            texto_archivo = f"{archivo.nombre}. {archivo.contenido}"
             
             respuesta_archivo = client.models.embed_content(
-                model="gemini-embedding-001", 
+                model="gemini-embedding-001",
                 contents=texto_archivo
             )
             vector_archivo = respuesta_archivo.embeddings[0].values
             
             similitud = similitud_coseno(vector_consulta, vector_archivo)
             
-            porcentaje = round(similitud * 100, 2)
+            porcentaje = max(0.0, min(100.0, round((similitud - 0.5) * 200, 2)))
+            
             resultados.append({
                 "id": archivo.id,
                 "nombre": archivo.nombre,
@@ -221,55 +224,65 @@ class AnalisisRequest(BaseModel):
 @app.post("/analizar-documento")
 def analizar_documento(req: AnalisisRequest):
     inicio = time.time()
-    try:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            return {"error": "GOOGLE_API_KEY no encontrada en .env"}
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return {"error": "GOOGLE_API_KEY no encontrada en .env"}
 
-        client = genai.Client(api_key=api_key)
-        
-        prompt_analisis = f"""
-        Eres una herramienta de análisis de documentos del sistema MiDesk.
-        Tu tarea es aplicar la siguiente acción: '{req.accion}' sobre el texto proporcionado.
-        
-        Guía de acciones soportadas:
-        - "resumir": Crea un resumen claro y conciso del documento.
-        - "ideas_principales": Extrae los puntos clave en formato de viñetas.
-        - "mejorar_redaccion": Corrige la ortografía y dale un tono profesional.
-        - "traducir_ingles": Traduce el texto al inglés asegurando una estructura gramatical avanzada e impecable.
-        - "explicar_codigo": Analiza el fragmento de código proporcionado y explica su lógica paso a paso.
+    client = genai.Client(api_key=api_key)
+    
+    prompt_analisis = f"""
+    Eres una herramienta de análisis de documentos del sistema GeckOS.
+    Tu tarea es aplicar la siguiente acción: '{req.accion}' sobre el texto proporcionado.
+    
+    Guía de acciones soportadas:
+    - "resumir": Crea un resumen claro y conciso del documento.
+    - "ideas_principales": Extrae los puntos clave en formato de viñetas.
+    - "mejorar_redaccion": Corrige la ortografía y dale un tono profesional.
+    - "traducir_ingles": Traduce el texto al inglés asegurando una estructura gramatical impecable.
 
-        DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
-        {{
-            "resultado": "Aquí va el texto procesado final"
-        }}
+    DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
+    {{
+        "resultado": "Aquí va el texto procesado final"
+    }}
 
-        Texto a procesar:
-        {req.texto}
-        """
+    Texto a procesar:
+    {req.texto}
+    """
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_analisis,
-            config=dict(
-                response_mime_type="application/json",
-                temperature=0.2
+    max_reintentos = 2
+    for intento in range(max_reintentos):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_analisis,
+                config=dict(
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
             )
-        )
 
-        respuesta_ia_json = json.loads(response.text)
-        fin = time.time()
+            respuesta_ia_json = json.loads(response.text)
+            fin = time.time()
 
-        return {
-            "mensaje": f"Análisis completado: {req.accion}",
-            "respuesta": respuesta_ia_json,
-            "metricas": {
-                "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+            return {
+                "mensaje": f"Análisis completado: {req.accion}",
+                "respuesta": respuesta_ia_json,
+                "metricas": {
+                    "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+                }
             }
-        }
 
-    except Exception as e:
-        return {
-            "error": "Fallo al procesar el documento",
-            "detalle": str(e)
-        }
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                if intento == max_reintentos - 1:
+                    return {
+                        "error": "Límite de peticiones gratuitas alcanzado.",
+                        "detalle": "Los servidores de IA están limitando la velocidad. Por favor, intenta de nuevo en 1 minuto."
+                    }
+                time.sleep(22) 
+            else:
+                return {
+                    "error": "Fallo al procesar el documento",
+                    "detalle": error_str
+                }
