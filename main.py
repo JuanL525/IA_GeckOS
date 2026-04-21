@@ -12,13 +12,13 @@ import base64
 
 load_dotenv()
 
-app = FastAPI(title="Microservicio IA - MiDesk (Google Gemini)")
+app = FastAPI(title="Microservicio IA - GeckOS (Google Gemini)")
 
 SYSTEM_PROMPT = """
-Eres el núcleo de Inteligencia Artificial de MiDesk, un sistema operativo virtual.
+Eres el núcleo de Inteligencia Artificial de GeckOS, un sistema operativo virtual.
 Tu objetivo es analizar lo que pide el usuario y ejecutar comandos en el sistema.
 
-REGLA ESTRICTA DE CONTEXTO: Si el usuario te pregunta cosas que no tienen NADA que ver con MiDesk, organización, productividad o el uso de la PC, debes rechazar la solicitud amablemente recordando que eres el asistente de MiDesk.
+REGLA ESTRICTA DE CONTEXTO: Si el usuario te pregunta cosas que no tienen NADA que ver con GeckOS, organización, productividad o el uso de la PC, debes rechazar la solicitud amablemente recordando que eres el asistente de GeckOS.
 
 DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
 {
@@ -58,7 +58,7 @@ def chat(req: ChatRequest):
         prompt = f"{SYSTEM_PROMPT}\nUsuario: {req.mensaje}"
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
             config=dict(
                 response_mime_type="application/json",
