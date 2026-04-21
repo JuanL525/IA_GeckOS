@@ -9,10 +9,11 @@ import requests
 import math 
 from typing import List
 import base64
+from gradio_client import Client
 
 load_dotenv()
 
-app = FastAPI(title="Microservicio IA - GeckOS (Google Gemini)")
+app = FastAPI(title="Microservicio IA - GeckOS")
 
 SYSTEM_PROMPT = """
 Eres el núcleo de Inteligencia Artificial de GeckOS, un sistema operativo virtual.
@@ -102,41 +103,33 @@ def generar_fondo(req: FondoRequest):
         if not hf_api_key:
             return {"error": "HUGGINGFACE_API_KEY no encontrada en .env"}
 
-        API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
-        headers = {"Authorization": f"Bearer {hf_api_key}"}
+        prompt_final = f"desktop wallpaper, 16:9, masterpiece, {req.descripcion}"
 
-        prompt_final = f"desktop wallpaper, highly detailed, masterpiece, {req.descripcion}"
+        client = Client("black-forest-labs/FLUX.1-dev", token=hf_api_key)
 
-        respuesta_hf = requests.post(
-            API_URL, 
-            headers=headers, 
-            json={
-                "inputs": prompt_final,
-                "parameters": {
-                    "width": 1024,
-                    "height": 576
-                }
-            }
+        resultado = client.predict(
+            prompt=prompt_final,
+            seed=0,
+            randomize_seed=True,
+            width=1024,
+            height=576,
+            guidance_scale=3.5,
+            num_inference_steps=28,
+            api_name="/infer"
         )
 
-        if respuesta_hf.status_code != 200:
-            return {
-                "error": "Error en los servidores de Hugging Face", 
-                "detalle": respuesta_hf.text
-            }
+        ruta_imagen = resultado[0]
 
-        imagen_bytes = respuesta_hf.content
-
-        with open("fondo_prueba.jpg", "wb") as archivo_imagen:
-            archivo_imagen.write(imagen_bytes)
+        with open(ruta_imagen, "rb") as archivo_imagen:
+            imagen_bytes = archivo_imagen.read()
         
         imagen_base64 = base64.b64encode(imagen_bytes).decode('utf-8')
-        formato_datos = f"data:image/jpeg;base64,{imagen_base64}"
+        formato_datos = f"data:image/webp;base64,{imagen_base64}" # FLUX suele devolver WebP
 
         fin = time.time()
 
         return {
-            "mensaje": "Fondo generado con éxito",
+            "mensaje": "Fondo generado con éxito con FLUX.1",
             "imagen": formato_datos,
             "metricas": {
                 "tiempo_respuesta_ms": int((fin - inicio) * 1000)
@@ -145,7 +138,7 @@ def generar_fondo(req: FondoRequest):
 
     except Exception as e:
         return {
-            "error": "Fallo al generar el fondo de pantalla",
+            "error": "Fallo al generar el fondo con FLUX.1",
             "detalle": str(e)
         }
 
