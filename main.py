@@ -10,6 +10,7 @@ import math
 from typing import List
 import base64
 from gradio_client import Client
+from groq import Groq
 
 load_dotenv()
 
@@ -104,42 +105,72 @@ def generar_fondo(req: FondoRequest):
             return {"error": "HUGGINGFACE_API_KEY no encontrada en .env"}
 
         prompt_final = f"desktop wallpaper, 16:9, masterpiece, {req.descripcion}"
+        
+        modelo_usado = ""
 
-        client = Client("black-forest-labs/FLUX.1-dev", token=hf_api_key)
+        try:
+            # ==========================================
+            # PLAN A: Intentar con FLUX.1-dev
+            # ==========================================
+            client = Client("black-forest-labs/FLUX.1-dev", token=hf_api_key)
+            resultado = client.predict(
+                prompt=prompt_final,
+                seed=0,
+                randomize_seed=True,
+                width=1024,
+                height=576,
+                guidance_scale=3.5,
+                num_inference_steps=28,
+                api_name="/infer"
+            )
+            ruta_imagen = resultado[0]
+            modelo_usado = "FLUX.1-dev"
 
-        resultado = client.predict(
-            prompt=prompt_final,
-            seed=0,
-            randomize_seed=True,
-            width=1024,
-            height=576,
-            guidance_scale=3.5,
-            num_inference_steps=28,
-            api_name="/infer"
-        )
+        except Exception as error_flux:
+            print(f"Plan A (FLUX) falló: {error_flux}. Iniciando Plan B (ERNIE)...")
+            try:
+                # ==========================================
+                # PLAN B: Respaldo con ERNIE-Image-Turbo
+                # ==========================================
+                client_fallback = Client("baidu/ERNIE-Image-Turbo", token=hf_api_key)
+                resultado_fallback = client_fallback.predict(
+                    prompt=prompt_final,
+                    size="1376x768", # Formato 16:9 exacto sacado de tu view_api
+                    seed=-1,         
+                    use_pe=True,
+                    api_name="/generate_image"
+                )
+                
+                ruta_imagen = resultado_fallback[0]
+                modelo_usado = "ERNIE-Image-Turbo"
 
-        ruta_imagen = resultado[0]
+            except Exception as error_ernie:
+                return {
+                    "error": "Todos los servicios de generación de imágenes están caídos.",
+                    "detalle": f"FLUX: {str(error_flux)} | ERNIE: {str(error_ernie)}"
+                }
 
+        # --- PROCESAMIENTO A BASE64 ---
         with open(ruta_imagen, "rb") as archivo_imagen:
             imagen_bytes = archivo_imagen.read()
         
         imagen_base64 = base64.b64encode(imagen_bytes).decode('utf-8')
-        formato_datos = f"data:image/webp;base64,{imagen_base64}" # FLUX suele devolver WebP
+        formato_datos = f"data:image/webp;base64,{imagen_base64}" 
 
         fin = time.time()
 
         return {
-            "mensaje": "Fondo generado con éxito con FLUX.1",
+            "mensaje": f"Fondo generado con éxito usando {modelo_usado}",
             "imagen": formato_datos,
             "metricas": {
                 "tiempo_respuesta_ms": int((fin - inicio) * 1000)
             }
         }
 
-    except Exception as e:
+    except Exception as e_critico:
         return {
-            "error": "Fallo al generar el fondo con FLUX.1",
-            "detalle": str(e)
+            "error": "Fallo crítico en el endpoint de generación de fondos",
+            "detalle": str(e_critico)
         }
 
 
@@ -216,7 +247,6 @@ def buscar_archivos(req: BusquedaRequest):
             "error": "Fallo al realizar la búsqueda semántica",
             "detalle": str(e)
         }
-
 class AnalisisRequest(BaseModel):
     texto: str
     accion: str 
@@ -231,14 +261,10 @@ def analizar_documento(req: AnalisisRequest):
     client = genai.Client(api_key=api_key)
     
     prompt_analisis = f"""
-    Eres una herramienta de análisis de documentos del sistema GeckOS.
-    Tu tarea es aplicar la siguiente acción: '{req.accion}' sobre el texto proporcionado.
+    Eres el procesador de texto avanzado (la "navaja suiza") del sistema GeckOS.
+    Tu tarea es interpretar y aplicar EXACTAMENTE la siguiente instrucción: '{req.accion}' sobre el texto proporcionado.
     
-    Guía de acciones soportadas:
-    - "resumir": Crea un resumen claro y conciso del documento.
-    - "ideas_principales": Extrae los puntos clave en formato de viñetas.
-    - "mejorar_redaccion": Corrige la ortografía y dale un tono profesional.
-    - "traducir_ingles": Traduce el texto al inglés asegurando una estructura gramatical impecable.
+    Eres capaz de realizar cualquier tarea de lenguaje natural: resumir, extraer ideas principales, extender textos, mejorar la redacción, traducir, cambiar el tono, etc. Hazlo con la mayor calidad profesional posible.
 
     DEBES responder ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
     {{
@@ -249,40 +275,60 @@ def analizar_documento(req: AnalisisRequest):
     {req.texto}
     """
 
-    max_reintentos = 2
-    for intento in range(max_reintentos):
+    modelo_usado = ""
+    respuesta_ia_json = {}
+
+    try:
+        # ==========================================
+        # PLAN A: El modelo más avanzado (2.5 Flash)
+        # ==========================================
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_analisis,
+            config=dict(
+                response_mime_type="application/json",
+                temperature=0.2
+            )
+        )
+        respuesta_ia_json = json.loads(response.text)
+        modelo_usado = "gemini-2.5-flash"
+
+    except Exception as error_principal:
+        print(f"Plan A falló ({error_principal}). Iniciando Plan B (Groq/Llama3)...")
         try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt_analisis,
-                config=dict(
-                    response_mime_type="application/json",
-                    temperature=0.2
-                )
+            # ==========================================
+            # PLAN B: Respaldo de ultra alta velocidad (Groq)
+            # ==========================================
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            if not groq_api_key:
+                raise ValueError("GROQ_API_KEY no encontrada en .env")
+
+            cliente_groq = Groq(api_key=groq_api_key)
+
+            response_fallback = cliente_groq.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": prompt_analisis}
+                ],
+                model="llama-3.1-8b-instant", 
+                response_format={"type": "json_object"} 
             )
 
-            respuesta_ia_json = json.loads(response.text)
-            fin = time.time()
+            respuesta_ia_json = json.loads(response_fallback.choices[0].message.content)
+            modelo_usado = "Llama-3.1-8b (Groq)"
 
+        except Exception as error_secundario:
             return {
-                "mensaje": f"Análisis completado: {req.accion}",
-                "respuesta": respuesta_ia_json,
-                "metricas": {
-                    "tiempo_respuesta_ms": int((fin - inicio) * 1000)
-                }
+                "error": "Los servidores de análisis están experimentando alta demanda.",
+                "detalle": f"Plan A: {str(error_principal)} | Plan B: {str(error_secundario)}"
             }
 
-        except Exception as e:
-            error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                if intento == max_reintentos - 1:
-                    return {
-                        "error": "Límite de peticiones gratuitas alcanzado.",
-                        "detalle": "Los servidores de IA están limitando la velocidad. Por favor, intenta de nuevo en 1 minuto."
-                    }
-                time.sleep(22) 
-            else:
-                return {
-                    "error": "Fallo al procesar el documento",
-                    "detalle": error_str
-                }
+    fin = time.time()
+
+    return {
+        "mensaje": f"Análisis completado: {req.accion}",
+        "modelo_ejecucion": modelo_usado, 
+        "respuesta": respuesta_ia_json,
+        "metricas": {
+            "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+        }
+    }
