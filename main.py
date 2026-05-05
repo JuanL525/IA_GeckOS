@@ -25,7 +25,7 @@ REGLA DE COMPORTAMIENTO ESTRICTA: Eres un asistente puramente conversacional y c
 MANUAL DE INTERFAZ DE GECKOS (Usa estas instrucciones para guiar al usuario cuando pregunte cómo usar el sistema):
 1. Generar Imágenes con IA: Indícale que presione el menú de las 3 rayitas en la esquina inferior izquierda, luego el botón de Configuración (engranaje), seleccione el apartado "Generar con IA" y finalmente escriba ahí su prompt.
 2. Búsqueda Semántica: Indícale que entre a la aplicación "Mi Equipo", escriba su consulta en la barra de búsqueda y presione el botón de la derecha con ícono de estrella (para buscar por relevancia).
-3. Análisis de Documentos: Indícale que primero seleccione y abra el archivo que desea analizar, presione el botón que dice "IA" y escriba la acción a realizar (traducir, mejorar redacción, sacar ideas, etc.).
+3. Análisis de Documentos: Indícale que primero seleccione y abra el archivo que desea analizar, presione el botón que dice "IA" y escriba o seleccione la acción a realizar (traducir, mejorar redacción, sacar ideas, etc.).
 
 REGLA DE CONTEXTO EDUCATIVO: Cuando el usuario te haga una pregunta conceptual o técnica (ej. "¿Qué es un socket?", "¿Cómo funciona un bucle for?", "¿Qué es una API?"), debes responder de forma clara, con analogías si es posible, y enfocándote en que el estudiante comprenda el tema a la perfección.
 
@@ -53,10 +53,31 @@ Respuesta: {"mensaje": "¡Esa es la actitud! ¿Con qué materia o tema te puedo 
 
 class ChatRequest(BaseModel):
     mensaje: str
+    test_mode: bool = False
 
+# --- ENDPOINT CHAT ---
 @app.post("/chat")
 def chat(req: ChatRequest):
     inicio = time.time()
+
+    # ==========================================
+    # INTERCEPTOR DE PRUEBAS DE CARGA (MOCK)
+    # ==========================================
+    if req.test_mode:
+        time.sleep(1.5) # Simulamos 1.5 segundos de latencia de red de Google
+        fin = time.time()
+        return {
+            "respuesta": {
+                "mensaje": "[MODO PRUEBA] Hola, soy tu tutor virtual. Esta es una respuesta simulada para no consumir cuota de la API."
+            },
+            "metricas": {
+                "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+            }
+        }
+
+    # ==========================================
+    # FLUJO NORMAL (PRODUCCIÓN)
+    # ==========================================
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return {"error": "GOOGLE_API_KEY no encontrada en .env"}
@@ -96,23 +117,42 @@ def chat(req: ChatRequest):
 
 class FondoRequest(BaseModel):
     descripcion: str
+    test_mode: bool = False
 
+# --- ENDPOINT FONDOS ---
 @app.post("/generar-fondo")
 def generar_fondo(req: FondoRequest):
     inicio = time.time()
+
+    # ==========================================
+    # INTERCEPTOR DE PRUEBAS DE CARGA (MOCK)
+    # ==========================================
+    if req.test_mode:
+        time.sleep(4.5) # Simulamos 4.5 segundos, ya que la generación de imágenes es más lenta
+        fin = time.time()
+        # Pixel transparente 1x1 válido
+        pixel_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        return {
+            "mensaje": "Fondo generado con éxito usando MOCK-TEST",
+            "imagen": f"data:image/png;base64,{pixel_base64}",
+            "metricas": {
+                "tiempo_respuesta_ms": int((fin - inicio) * 1000)
+            }
+        }
+
+    # ==========================================
+    # FLUJO NORMAL (PRODUCCIÓN)
+    # ==========================================
     try:
         hf_api_key = os.getenv("HUGGINGFACE_API_KEY")
         if not hf_api_key:
             return {"error": "HUGGINGFACE_API_KEY no encontrada en .env"}
 
         prompt_final = f"desktop wallpaper, 16:9, masterpiece, {req.descripcion}"
-        
         modelo_usado = ""
 
         try:
-            # ==========================================
             # PLAN A: Intentar con FLUX.1-dev
-            # ==========================================
             client = Client("black-forest-labs/FLUX.1-dev", token=hf_api_key)
             resultado = client.predict(
                 prompt=prompt_final,
@@ -130,13 +170,11 @@ def generar_fondo(req: FondoRequest):
         except Exception as error_flux:
             print(f"Plan A (FLUX) falló: {error_flux}. Iniciando Plan B (ERNIE)...")
             try:
-                # ==========================================
                 # PLAN B: Respaldo con ERNIE-Image-Turbo
-                # ==========================================
                 client_fallback = Client("baidu/ERNIE-Image-Turbo", token=hf_api_key)
                 resultado_fallback = client_fallback.predict(
                     prompt=prompt_final,
-                    size="1376x768", # Formato 16:9 exacto sacado de tu view_api
+                    size="1376x768", 
                     seed=-1,         
                     use_pe=True,
                     api_name="/generate_image"
@@ -151,7 +189,6 @@ def generar_fondo(req: FondoRequest):
                     "detalle": f"FLUX: {str(error_flux)} | ERNIE: {str(error_ernie)}"
                 }
 
-        # --- PROCESAMIENTO A BASE64 ---
         with open(ruta_imagen, "rb") as archivo_imagen:
             imagen_bytes = archivo_imagen.read()
         
