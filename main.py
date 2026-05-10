@@ -11,6 +11,7 @@ from typing import List
 import base64
 from gradio_client import Client
 from groq import Groq
+from rank_bm25 import BM25Okapi
 
 load_dotenv()
 
@@ -238,9 +239,25 @@ def buscar_archivos(req: BusquedaRequest):
             return {"error": "GOOGLE_API_KEY no encontrada en .env"}
 
         client = genai.Client(api_key=api_key)
+
+        # ==========================================
+        # FASE 1: ANÁLISIS LÉXICO (Palabras exactas con BM25)
+        # ==========================================
+        # Preparamos los textos convirtiéndolos a minúsculas y separándolos por palabras
+        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in req.archivos]
+        bm25 = BM25Okapi(corpus_tokenizado)
+        consulta_tokenizada = req.consulta.lower().split(" ")
         
-        texto_consulta = f"Intención de búsqueda del usuario: {req.consulta}"
+        # Obtenemos los puntajes
+        puntajes_bm25 = bm25.get_scores(consulta_tokenizada)
         
+        # Normalizamos los puntajes léxicos para que estén en una escala de 0 a 1
+        max_bm25 = max(puntajes_bm25) if len(puntajes_bm25) > 0 and max(puntajes_bm25) > 0 else 1.0
+        puntajes_bm25_norm = [score / max_bm25 for score in puntajes_bm25]
+
+        # ==========================================
+        # FASE 2: ANÁLISIS SEMÁNTICO (Vectores IA)
+        # ==========================================
         respuesta_consulta = client.models.embed_content(
             model="gemini-embedding-001",
             contents=req.consulta
@@ -249,7 +266,14 @@ def buscar_archivos(req: BusquedaRequest):
 
         resultados = []
 
-        for archivo in req.archivos:
+        # ==========================================
+        # FASE 3: FUSIÓN HÍBRIDA (Alpha Score)
+        # ==========================================
+        # Definimos qué tanto peso le damos a cada motor
+        peso_lexico = 0.4     # 40% de importancia a la coincidencia exacta
+        peso_semantico = 0.6  # 60% de importancia al contexto
+
+        for i, archivo in enumerate(req.archivos):
             texto_archivo = f"{archivo.nombre}. {archivo.contenido}"
             
             respuesta_archivo = client.models.embed_content(
@@ -258,26 +282,29 @@ def buscar_archivos(req: BusquedaRequest):
             )
             vector_archivo = respuesta_archivo.embeddings[0].values
             
-            similitud = similitud_coseno(vector_consulta, vector_archivo)
+            # Calculamos la similitud vectorial (suele dar entre 0.3 y 1.0)
+            similitud_semantica = similitud_coseno(vector_consulta, vector_archivo)
+            similitud_semantica_norm = max(0.0, similitud_semantica)
+
+            # ¡LA MAGIA DE LA FUSIÓN!
+            puntaje_final = (puntajes_bm25_norm[i] * peso_lexico) + (similitud_semantica_norm * peso_semantico)
             
-            porcentaje = max(0.0, min(100.0, round((similitud - 0.5) * 200, 2)))
-            
-            UMBRAL_MINIMO = 15.0 
-            
-            if porcentaje >= UMBRAL_MINIMO:
+            # Convertimos a un porcentaje limpio de 0 a 100
+            porcentaje_final = round(puntaje_final * 100, 2)
+
+            # Filtro de cordura: si no llega al menos al 25% de relevancia híbrida, es basura
+            if porcentaje_final >= 25.0:
                 resultados.append({
                     "id": archivo.id,
                     "nombre": archivo.nombre,
-                    "relevancia": porcentaje
+                    "relevancia": porcentaje_final
                 })
 
-        # Ordenar los resultados por relevancia de mayor a menor
         resultados_ordenados = sorted(resultados, key=lambda x: x["relevancia"], reverse=True)
-
         fin = time.time()
 
         return {
-            "mensaje": "Búsqueda semántica completada",
+            "mensaje": "Búsqueda híbrida completada",
             "resultados": resultados_ordenados,
             "metricas": {
                 "tiempo_respuesta_ms": int((fin - inicio) * 1000)
@@ -286,9 +313,11 @@ def buscar_archivos(req: BusquedaRequest):
 
     except Exception as e:
         return {
-            "error": "Fallo al realizar la búsqueda semántica",
+            "error": "Fallo al realizar la búsqueda híbrida",
             "detalle": str(e)
         }
+    
+    
 class AnalisisRequest(BaseModel):
     texto: str
     accion: str 
