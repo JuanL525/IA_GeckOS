@@ -236,47 +236,78 @@ def similitud_coseno(vec1, vec2):
 def buscar_archivos(req: BusquedaRequest):
     inicio = time.time()
     try:
-        # --- PLAN A: GEMINI (En la nube) ---
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise Exception("GOOGLE_API_KEY no encontrada")
-                
-        client = genai.Client(api_key=api_key)
-        respuesta_gemini = client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=textos_a_vectorizar
-        )
-        vectores = [emb.values for emb in respuesta_gemini.embeddings]
-        modelo_usado = "Gemini embedding-001"
+        # ==========================================
+        # FASE 1: ANÁLISIS LÉXICO (Palabras exactas con BM25)
+        # ==========================================
+        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in req.archivos]
+        bm25 = BM25Okapi(corpus_tokenizado)
+        consulta_tokenizada = req.consulta.lower().split(" ")
+        
+        puntajes_bm25 = bm25.get_scores(consulta_tokenizada)
+        max_bm25 = max(puntajes_bm25) if len(puntajes_bm25) > 0 and max(puntajes_bm25) > 0 else 1.0
+        puntajes_bm25_norm = [score / max_bm25 for score in puntajes_bm25]
 
-    except Exception as error_gemini:
-        print(f"Plan A (Gemini) falló: {error_gemini}. Activando Plan B (Cohere Multilingual)...")
+        # ==========================================
+        # FASE 2: ANÁLISIS SEMÁNTICO (CON FALLBACK API)
+        # ==========================================
+        # Aquí está la variable que arreglamos antes
+        textos_a_vectorizar = [req.consulta] + [f"{a.nombre}. {a.contenido}" for a in req.archivos]
+        vectores = []
+        modelo_usado = ""
+
         try:
-            # --- PLAN B: COHERE (El peso pesado de los Embeddings) ---
-            cohere_api_key = os.getenv("COHERE_API_KEY")
-            if not cohere_api_key:
-                raise Exception("COHERE_API_KEY no encontrada en .env")
-
-            # Inicializamos el cliente oficial de Cohere
-            co = cohere.Client(cohere_api_key)
+            # --- PLAN A: GEMINI (En la nube) ---
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise Exception("GOOGLE_API_KEY no encontrada")
                 
-            # Cohere procesa toda tu lista en un solo lote y en español
-            respuesta_cohere = co.embed(
-                texts=textos_a_vectorizar,
-                model='embed-multilingual-v3.0',
-                input_type='search_document'
+            client = genai.Client(api_key=api_key)
+            respuesta_gemini = client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=textos_a_vectorizar
+            )
+            vectores = [emb.values for emb in respuesta_gemini.embeddings]
+            modelo_usado = "Gemini embedding-001"
+
+        except Exception as error_gemini:
+            print(f"Plan A (Gemini) falló: {error_gemini}. Activando Plan B (Cohere Multilingual)...")
+            try:
+                # --- PLAN B: COHERE (El peso pesado de los Embeddings) ---
+                cohere_api_key = os.getenv("COHERE_API_KEY")
+                if not cohere_api_key:
+                    raise Exception("COHERE_API_KEY no encontrada en .env")
+
+                co = cohere.Client(cohere_api_key)
+                
+                # 1. Vectorizamos la CONSULTA con el tipo correcto
+                resp_consulta = co.embed(
+                    texts=[req.consulta],
+                    model='embed-multilingual-v3.0',
+                    input_type='search_query' # <--- ¡CLAVE!
                 )
+                vector_consulta = resp_consulta.embeddings[0]
+
+                # 2. Limpiamos el ruido (quitamos el .txt) y vectorizamos los ARCHIVOS
+                textos_archivos = [f"{a.nombre.replace('.txt', '')}. {a.contenido}" for a in req.archivos]
                 
-                # Extraemos la matriz de vectores
-            vectores = respuesta_cohere.embeddings
-            modelo_usado = "Fallback: Cohere embed-multilingual-v3.0"
+                resp_archivos = co.embed(
+                    texts=textos_archivos,
+                    model='embed-multilingual-v3.0',
+                    input_type='search_document' # <--- ¡CLAVE!
+                )
+                vectores_archivos = resp_archivos.embeddings
 
-        except Exception as error_cohere:
-            return {
-                "error": "Caída total de servicios de búsqueda semántica (Gemini y Cohere).",
-                "detalle": f"Gemini: {str(error_gemini)} | Cohere: {str(error_cohere)}"
-            }
+                # Reconstruimos las variables para que la Fase 3 funcione intacta
+                vectores = [vector_consulta] + vectores_archivos
+                modelo_usado = "Fallback: Cohere embed-multilingual-v3.0"
 
+            except Exception as error_cohere:
+                return {
+                    "error": "Caída total de servicios de búsqueda semántica (Gemini y Cohere).",
+                    "detalle": f"Gemini: {str(error_gemini)} | Cohere: {str(error_cohere)}"
+                }
+            
+        # Extraemos la consulta y los archivos
         vector_consulta = vectores[0]
         vectores_archivos = vectores[1:]
 
@@ -285,17 +316,20 @@ def buscar_archivos(req: BusquedaRequest):
         # ==========================================
         # FASE 3: FUSIÓN HÍBRIDA Y FILTRO
         # ==========================================
-        peso_lexico = 0.4
-        peso_semantico = 0.6 
+        peso_lexico = 0.3
+        peso_semantico = 0.7 
 
         for i, archivo in enumerate(req.archivos):
             similitud_semantica = similitud_coseno(vector_consulta, vectores_archivos[i])
-            similitud_semantica_norm = max(0.0, similitud_semantica)
+            
+            # AMPLIFICADOR CORREGIDO: Elevamos al CUADRADO (2) en lugar del cubo (3)
+            similitud_semantica_norm = math.pow(max(0.0, similitud_semantica), 2)
 
             puntaje_final = (puntajes_bm25_norm[i] * peso_lexico) + (similitud_semantica_norm * peso_semantico)
             porcentaje_final = round(puntaje_final * 100, 2)
 
-            if porcentaje_final >= 25.0:
+            # Umbral ajustado: Al elevar al cuadrado los números bajan, así que 15% es el nuevo límite
+            if porcentaje_final >= 10.0:
                 resultados.append({
                     "id": archivo.id,
                     "nombre": archivo.nombre,
