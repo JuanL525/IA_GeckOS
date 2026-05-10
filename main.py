@@ -13,6 +13,7 @@ from gradio_client import Client
 from groq import Groq
 from rank_bm25 import BM25Okapi
 import cohere
+import re
 
 load_dotenv()
 
@@ -232,35 +233,69 @@ def similitud_coseno(vec1, vec2):
         return 0
     return dot_product / (magnitude_v1 * magnitude_v2)
 
+def es_texto_basura(contenido, umbral_letras=0.65, longitud_minima=5):
+    texto_limpio = contenido.replace(" ", "")
+    if not texto_limpio or len(texto_limpio) < longitud_minima:
+        return True
+    letras = sum(1 for c in texto_limpio if c.isalpha())
+    proporcion = letras / len(texto_limpio)
+    return proporcion < umbral_letras
+
+def es_texto_legible(contenido, min_palabras=2, min_vocales=3):
+    vocales = sum(1 for c in contenido.lower() if c in 'aeiou')
+    palabras = re.findall(r'[a-zA-Záéíóúñ]{2,}', contenido)
+    return len(palabras) >= min_palabras and vocales >= min_vocales
+
+def es_contenido_valido(contenido):
+    if es_texto_basura(contenido):
+        return False
+    if not es_texto_legible(contenido):
+        return False
+    return True
+
 @app.post("/buscar")
 def buscar_archivos(req: BusquedaRequest):
     inicio = time.time()
     try:
         # ==========================================
-        # FASE 1: ANÁLISIS LÉXICO (Palabras exactas con BM25)
+        # FILTRO DE ARCHIVOS BASURA
         # ==========================================
-        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in req.archivos]
+        archivos_limpios = [a for a in req.archivos if es_contenido_valido(a.contenido)]
+
+        if not archivos_limpios:
+            return {
+                "mensaje": "No se encontraron archivos con contenido legible.",
+                "resultados": [],
+                "metricas": {"tiempo_respuesta_ms": int((time.time() - inicio) * 1000)}
+            }
+
+        # A partir de aquí, SIEMPRE usamos 'archivos_limpios', no 'req.archivos'
+
+        # ==========================================
+        # FASE 1: ANÁLISIS LÉXICO (BM25)
+        # ==========================================
+        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in archivos_limpios]  # <-- CORREGIDO
         bm25 = BM25Okapi(corpus_tokenizado)
         consulta_tokenizada = req.consulta.lower().split(" ")
-        
-        puntajes_bm25 = bm25.get_scores(consulta_tokenizada)
+
+        puntajes_bm25 = list(bm25.get_scores(consulta_tokenizada))
         max_bm25 = max(puntajes_bm25) if len(puntajes_bm25) > 0 and max(puntajes_bm25) > 0 else 1.0
+
         puntajes_bm25_norm = [score / max_bm25 for score in puntajes_bm25]
 
         # ==========================================
-        # FASE 2: ANÁLISIS SEMÁNTICO (CON FALLBACK API)
+        # FASE 2: ANÁLISIS SEMÁNTICO (CON FALLBACK)
         # ==========================================
-        # Aquí está la variable que arreglamos antes
-        textos_a_vectorizar = [req.consulta] + [f"{a.nombre}. {a.contenido}" for a in req.archivos]
+        textos_a_vectorizar = [req.consulta] + [f"{a.nombre}. {a.contenido}" for a in archivos_limpios]
         vectores = []
         modelo_usado = ""
 
         try:
-            # --- PLAN A: GEMINI (En la nube) ---
+            # --- PLAN A: GEMINI ---
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
                 raise Exception("GOOGLE_API_KEY no encontrada")
-                
+
             client = genai.Client(api_key=api_key)
             respuesta_gemini = client.models.embed_content(
                 model="gemini-embedding-001",
@@ -270,34 +305,32 @@ def buscar_archivos(req: BusquedaRequest):
             modelo_usado = "Gemini embedding-001"
 
         except Exception as error_gemini:
-            print(f"Plan A (Gemini) falló: {error_gemini}. Activando Plan B (Cohere Multilingual)...")
+            print(f"Plan A (Gemini) falló: {error_gemini}. Activando Plan B (Cohere)...")
             try:
-                # --- PLAN B: COHERE (El peso pesado de los Embeddings) ---
+                # --- PLAN B: COHERE ---
                 cohere_api_key = os.getenv("COHERE_API_KEY")
                 if not cohere_api_key:
                     raise Exception("COHERE_API_KEY no encontrada en .env")
 
                 co = cohere.Client(cohere_api_key)
-                
-                # 1. Vectorizamos la CONSULTA con el tipo correcto
+
+                # Vectorizar consulta
                 resp_consulta = co.embed(
                     texts=[req.consulta],
                     model='embed-multilingual-v3.0',
-                    input_type='search_query' # <--- ¡CLAVE!
+                    input_type='search_query'
                 )
                 vector_consulta = resp_consulta.embeddings[0]
 
-                # 2. Limpiamos el ruido (quitamos el .txt) y vectorizamos los ARCHIVOS
-                textos_archivos = [f"{a.nombre.replace('.txt', '')}. {a.contenido}" for a in req.archivos]
-                
+                # Vectorizar archivos LIMPIOS (corregido también)
+                textos_archivos = [f"{a.nombre.replace('.txt', '')}. {a.contenido}" for a in archivos_limpios]  # <-- USAMOS archivos_limpios
                 resp_archivos = co.embed(
                     texts=textos_archivos,
                     model='embed-multilingual-v3.0',
-                    input_type='search_document' # <--- ¡CLAVE!
+                    input_type='search_document'
                 )
                 vectores_archivos = resp_archivos.embeddings
 
-                # Reconstruimos las variables para que la Fase 3 funcione intacta
                 vectores = [vector_consulta] + vectores_archivos
                 modelo_usado = "Fallback: Cohere embed-multilingual-v3.0"
 
@@ -306,29 +339,25 @@ def buscar_archivos(req: BusquedaRequest):
                     "error": "Caída total de servicios de búsqueda semántica (Gemini y Cohere).",
                     "detalle": f"Gemini: {str(error_gemini)} | Cohere: {str(error_cohere)}"
                 }
-            
-        # Extraemos la consulta y los archivos
+
+        # Separar vector de consulta y vectores de archivos
         vector_consulta = vectores[0]
         vectores_archivos = vectores[1:]
 
-        resultados = []
-
         # ==========================================
-        # FASE 3: FUSIÓN HÍBRIDA Y FILTRO
+        # FASE 3: FUSIÓN HÍBRIDA Y FILTRO DE RELEVANCIA
         # ==========================================
         peso_lexico = 0.3
-        peso_semantico = 0.7 
+        peso_semantico = 0.7
+        resultados = []
 
-        for i, archivo in enumerate(req.archivos):
+        for i, archivo in enumerate(archivos_limpios):
             similitud_semantica = similitud_coseno(vector_consulta, vectores_archivos[i])
-            
-            # AMPLIFICADOR CORREGIDO: Elevamos al CUADRADO (2) en lugar del cubo (3)
             similitud_semantica_norm = math.pow(max(0.0, similitud_semantica), 2)
 
             puntaje_final = (puntajes_bm25_norm[i] * peso_lexico) + (similitud_semantica_norm * peso_semantico)
             porcentaje_final = round(puntaje_final * 100, 2)
 
-            # Umbral ajustado: Al elevar al cuadrado los números bajan, así que 15% es el nuevo límite
             if porcentaje_final >= 10.0:
                 resultados.append({
                     "id": archivo.id,
