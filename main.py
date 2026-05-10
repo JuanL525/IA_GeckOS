@@ -390,11 +390,6 @@ class AnalisisRequest(BaseModel):
 @app.post("/analizar-documento")
 def analizar_documento(req: AnalisisRequest):
     inicio = time.time()
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return {"error": "GOOGLE_API_KEY no encontrada en .env"}
-
-    client = genai.Client(api_key=api_key)
     
     prompt_analisis = f"""
     Eres el procesador de texto avanzado (la "navaja suiza") del sistema GeckOS.
@@ -414,48 +409,70 @@ def analizar_documento(req: AnalisisRequest):
     modelo_usado = ""
     respuesta_ia_json = {}
 
-    try:
-        # ==========================================
-        # PLAN A: El modelo más avanzado (2.5 Flash)
-        # ==========================================
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_analisis,
-            config=dict(
-                response_mime_type="application/json",
-                temperature=0.2
-            )
-        )
-        respuesta_ia_json = json.loads(response.text)
-        modelo_usado = "gemini-2.5-flash"
+    # ==========================================
+    # ENRUTADOR INTELIGENTE (ROUTER)
+    # ==========================================
+    # Convertimos la acción a minúsculas para buscar coincidencias fácilmente
+    accion_lower = req.accion.lower()
+    palabras_traduccion = ["traducir", "traduce", "traducción", "translate", "idioma", "inglés", "english"]
+    
+    # Si la acción contiene alguna de las palabras clave, forzamos el uso de Gemini
+    forzar_gemini = any(palabra in accion_lower for palabra in palabras_traduccion)
 
-    except Exception as error_principal:
-        print(f"Plan A falló ({error_principal}). Iniciando Plan B (Groq/Llama3)...")
+    if not forzar_gemini:
+        # ==========================================
+        # RUTA 1: TAREAS GENERALES -> GROQ (Velocidad)
+        # ==========================================
         try:
-            # ==========================================
-            # PLAN B: Respaldo de ultra alta velocidad (Groq)
-            # ==========================================
             groq_api_key = os.getenv("GROQ_API_KEY")
             if not groq_api_key:
-                raise ValueError("GROQ_API_KEY no encontrada en .env")
+                raise ValueError("GROQ_API_KEY no encontrada")
 
             cliente_groq = Groq(api_key=groq_api_key)
-
-            response_fallback = cliente_groq.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": prompt_analisis}
-                ],
+            response = cliente_groq.chat.completions.create(
+                messages=[{"role": "system", "content": prompt_analisis}],
                 model="llama-3.1-8b-instant", 
                 response_format={"type": "json_object"} 
             )
 
-            respuesta_ia_json = json.loads(response_fallback.choices[0].message.content)
+            respuesta_ia_json = json.loads(response.choices[0].message.content)
             modelo_usado = "Llama-3.1-8b (Groq)"
 
-        except Exception as error_secundario:
+        except Exception as error_groq:
+            print(f"Groq falló ({error_groq}). Redirigiendo a Gemini...")
+            forzar_gemini = True # Si Groq falla, activamos el switch para que el bloque de Gemini lo rescate
+
+    # OJO: Usamos 'if' y no 'else' porque si Groq falló arriba, forzar_gemini ahora es True
+    if forzar_gemini:
+        # ==========================================
+        # RUTA 2: TRADUCCIONES O FALLBACK -> GEMINI (Precisión)
+        # ==========================================
+        try:
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("GOOGLE_API_KEY no encontrada")
+
+            client = genai.Client(api_key=api_key)
+            response_gemini = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_analisis,
+                config=dict(
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
+            )
+            respuesta_ia_json = json.loads(response_gemini.text)
+            
+            # Etiquetamos dinámicamente si fue por enrutamiento o por emergencia
+            if "traduc" in accion_lower or "inglés" in accion_lower or "english" in accion_lower:
+                modelo_usado = "Gemini 2.5 Flash (Traductor Dedicado)"
+            else:
+                modelo_usado = "Gemini 2.5 Flash (Fallback)"
+
+        except Exception as error_gemini:
             return {
                 "error": "Los servidores de análisis están experimentando alta demanda.",
-                "detalle": f"Plan A: {str(error_principal)} | Plan B: {str(error_secundario)}"
+                "detalle": f"Error final en Gemini: {str(error_gemini)}"
             }
 
     fin = time.time()
