@@ -262,12 +262,16 @@ def buscar_archivos(req: BusquedaRequest):
             
             porcentaje = max(0.0, min(100.0, round((similitud - 0.5) * 200, 2)))
             
-            resultados.append({
-                "id": archivo.id,
-                "nombre": archivo.nombre,
-                "relevancia": porcentaje
-            })
+            UMBRAL_MINIMO = 15.0 
+            
+            if porcentaje >= UMBRAL_MINIMO:
+                resultados.append({
+                    "id": archivo.id,
+                    "nombre": archivo.nombre,
+                    "relevancia": porcentaje
+                })
 
+        # Ordenar los resultados por relevancia de mayor a menor
         resultados_ordenados = sorted(resultados, key=lambda x: x["relevancia"], reverse=True)
 
         fin = time.time()
