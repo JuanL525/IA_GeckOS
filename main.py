@@ -303,6 +303,8 @@ def buscar_archivos(req: BusquedaRequest):
         resultados_ordenados = sorted(resultados, key=lambda x: x["relevancia"], reverse=True)
         fin = time.time()
 
+        print("ARCHIVOS QUE PASARON EL FILTRO:", resultados_ordenados)
+
         return {
             "mensaje": "Búsqueda híbrida completada",
             "resultados": resultados_ordenados,
@@ -317,7 +319,7 @@ def buscar_archivos(req: BusquedaRequest):
             "detalle": str(e)
         }
     
-    
+
 class AnalisisRequest(BaseModel):
     texto: str
     accion: str 
