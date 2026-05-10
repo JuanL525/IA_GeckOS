@@ -12,10 +12,15 @@ import base64
 from gradio_client import Client
 from groq import Groq
 from rank_bm25 import BM25Okapi
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
 app = FastAPI(title="Microservicio IA - GeckOS")
+
+print("Cargando modelo de respaldo local (Sentence Transformers)...")
+modelo_fallback_local = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+print("Modelo de respaldo listo.")
 
 SYSTEM_PROMPT = """
 Eres el núcleo de Inteligencia Artificial de GeckOS, un entorno virtual enfocado en potenciar el aprendizaje académico y la productividad de los estudiantes.
@@ -234,65 +239,73 @@ def similitud_coseno(vec1, vec2):
 def buscar_archivos(req: BusquedaRequest):
     inicio = time.time()
     try:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            return {"error": "GOOGLE_API_KEY no encontrada en .env"}
-
-        client = genai.Client(api_key=api_key)
-
         # ==========================================
         # FASE 1: ANÁLISIS LÉXICO (Palabras exactas con BM25)
         # ==========================================
-        # Preparamos los textos convirtiéndolos a minúsculas y separándolos por palabras
         corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in req.archivos]
         bm25 = BM25Okapi(corpus_tokenizado)
         consulta_tokenizada = req.consulta.lower().split(" ")
         
-        # Obtenemos los puntajes
         puntajes_bm25 = bm25.get_scores(consulta_tokenizada)
-        
-        # Normalizamos los puntajes léxicos para que estén en una escala de 0 a 1
         max_bm25 = max(puntajes_bm25) if len(puntajes_bm25) > 0 and max(puntajes_bm25) > 0 else 1.0
         puntajes_bm25_norm = [score / max_bm25 for score in puntajes_bm25]
 
         # ==========================================
-        # FASE 2: ANÁLISIS SEMÁNTICO (Vectores IA)
+        # FASE 2: ANÁLISIS SEMÁNTICO (CON FALLBACK LOCAL)
         # ==========================================
-        respuesta_consulta = client.models.embed_content(
-            model="gemini-embedding-001",
-            contents=req.consulta
-        )
-        vector_consulta = respuesta_consulta.embeddings[0].values
+        textos_a_vectorizar = [req.consulta] + [f"{a.nombre}. {a.contenido}" for a in req.archivos]
+        vectores = []
+        modelo_usado = ""
+
+        try:
+            # --- PLAN A: GEMINI (En la nube) ---
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise Exception("GOOGLE_API_KEY no encontrada")
+                
+            client = genai.Client(api_key=api_key)
+            respuesta_gemini = client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=textos_a_vectorizar
+            )
+            vectores = [emb.values for emb in respuesta_gemini.embeddings]
+            modelo_usado = "Gemini embedding-001"
+
+        except Exception as error_gemini:
+            print(f"Plan A falló: {error_gemini}. Ejecutando modelo local en RAM...")
+            try:
+                # --- PLAN B: HUGGING FACE LOCAL (Sin internet, sin API Key) ---
+                # El modelo procesa la lista y devuelve un arreglo de Numpy
+                embeddings_numpy = modelo_fallback_local.encode(textos_a_vectorizar)
+                
+                # Convertimos la matriz de numpy a listas nativas de Python para la función coseno
+                vectores = embeddings_numpy.tolist() 
+                modelo_usado = "Fallback Local: all-MiniLM-L6-v2"
+
+            except Exception as error_local:
+                return {
+                    "error": "Caída total de servicios de búsqueda semántica.",
+                    "detalle": f"Gemini: {str(error_gemini)} | Local: {str(error_local)}"
+                }
+
+        vector_consulta = vectores[0]
+        vectores_archivos = vectores[1:]
 
         resultados = []
 
         # ==========================================
-        # FASE 3: FUSIÓN HÍBRIDA (Alpha Score)
+        # FASE 3: FUSIÓN HÍBRIDA Y FILTRO
         # ==========================================
-        # Definimos qué tanto peso le damos a cada motor
-        peso_lexico = 0.4     # 40% de importancia a la coincidencia exacta
-        peso_semantico = 0.6  # 60% de importancia al contexto
+        peso_lexico = 0.4
+        peso_semantico = 0.6 
 
         for i, archivo in enumerate(req.archivos):
-            texto_archivo = f"{archivo.nombre}. {archivo.contenido}"
-            
-            respuesta_archivo = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=texto_archivo
-            )
-            vector_archivo = respuesta_archivo.embeddings[0].values
-            
-            # Calculamos la similitud vectorial (suele dar entre 0.3 y 1.0)
-            similitud_semantica = similitud_coseno(vector_consulta, vector_archivo)
+            similitud_semantica = similitud_coseno(vector_consulta, vectores_archivos[i])
             similitud_semantica_norm = max(0.0, similitud_semantica)
 
-            # ¡LA MAGIA DE LA FUSIÓN!
             puntaje_final = (puntajes_bm25_norm[i] * peso_lexico) + (similitud_semantica_norm * peso_semantico)
-            
-            # Convertimos a un porcentaje limpio de 0 a 100
             porcentaje_final = round(puntaje_final * 100, 2)
 
-            # Filtro de cordura: si no llega al menos al 25% de relevancia híbrida, es basura
             if porcentaje_final >= 25.0:
                 resultados.append({
                     "id": archivo.id,
@@ -303,10 +316,8 @@ def buscar_archivos(req: BusquedaRequest):
         resultados_ordenados = sorted(resultados, key=lambda x: x["relevancia"], reverse=True)
         fin = time.time()
 
-        print("ARCHIVOS QUE PASARON EL FILTRO:", resultados_ordenados)
-
         return {
-            "mensaje": "Búsqueda híbrida completada",
+            "mensaje": f"Búsqueda híbrida completada usando {modelo_usado}",
             "resultados": resultados_ordenados,
             "metricas": {
                 "tiempo_respuesta_ms": int((fin - inicio) * 1000)
@@ -315,7 +326,7 @@ def buscar_archivos(req: BusquedaRequest):
 
     except Exception as e:
         return {
-            "error": "Fallo al realizar la búsqueda híbrida",
+            "error": "Error interno en el endpoint de búsqueda",
             "detalle": str(e)
         }
     
