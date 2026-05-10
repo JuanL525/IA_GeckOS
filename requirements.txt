@@ -6,3 +6,4 @@ google-genai
 gradio-client
 groq
 rank-bm25
+cohere

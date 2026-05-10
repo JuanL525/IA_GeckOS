@@ -12,15 +12,12 @@ import base64
 from gradio_client import Client
 from groq import Groq
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
+import cohere
 
 load_dotenv()
 
 app = FastAPI(title="Microservicio IA - GeckOS")
 
-print("Cargando modelo de respaldo local (Sentence Transformers)...")
-modelo_fallback_local = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-print("Modelo de respaldo listo.")
 
 SYSTEM_PROMPT = """
 Eres el núcleo de Inteligencia Artificial de GeckOS, un entorno virtual enfocado en potenciar el aprendizaje académico y la productividad de los estudiantes.
@@ -239,54 +236,46 @@ def similitud_coseno(vec1, vec2):
 def buscar_archivos(req: BusquedaRequest):
     inicio = time.time()
     try:
-        # ==========================================
-        # FASE 1: ANÁLISIS LÉXICO (Palabras exactas con BM25)
-        # ==========================================
-        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in req.archivos]
-        bm25 = BM25Okapi(corpus_tokenizado)
-        consulta_tokenizada = req.consulta.lower().split(" ")
-        
-        puntajes_bm25 = bm25.get_scores(consulta_tokenizada)
-        max_bm25 = max(puntajes_bm25) if len(puntajes_bm25) > 0 and max(puntajes_bm25) > 0 else 1.0
-        puntajes_bm25_norm = [score / max_bm25 for score in puntajes_bm25]
+        # --- PLAN A: GEMINI (En la nube) ---
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise Exception("GOOGLE_API_KEY no encontrada")
+                
+        client = genai.Client(api_key=api_key)
+        respuesta_gemini = client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=textos_a_vectorizar
+        )
+        vectores = [emb.values for emb in respuesta_gemini.embeddings]
+        modelo_usado = "Gemini embedding-001"
 
-        # ==========================================
-        # FASE 2: ANÁLISIS SEMÁNTICO (CON FALLBACK LOCAL)
-        # ==========================================
-        textos_a_vectorizar = [req.consulta] + [f"{a.nombre}. {a.contenido}" for a in req.archivos]
-        vectores = []
-        modelo_usado = ""
-
+    except Exception as error_gemini:
+        print(f"Plan A (Gemini) falló: {error_gemini}. Activando Plan B (Cohere Multilingual)...")
         try:
-            # --- PLAN A: GEMINI (En la nube) ---
-            api_key = os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise Exception("GOOGLE_API_KEY no encontrada")
-                
-            client = genai.Client(api_key=api_key)
-            respuesta_gemini = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=textos_a_vectorizar
-            )
-            vectores = [emb.values for emb in respuesta_gemini.embeddings]
-            modelo_usado = "Gemini embedding-001"
+            # --- PLAN B: COHERE (El peso pesado de los Embeddings) ---
+            cohere_api_key = os.getenv("COHERE_API_KEY")
+            if not cohere_api_key:
+                raise Exception("COHERE_API_KEY no encontrada en .env")
 
-        except Exception as error_gemini:
-            print(f"Plan A falló: {error_gemini}. Ejecutando modelo local en RAM...")
-            try:
-                # --- PLAN B: HUGGING FACE LOCAL (Sin internet, sin API Key) ---
-                # El modelo procesa la lista y devuelve un arreglo de Numpy
-                embeddings_numpy = modelo_fallback_local.encode(textos_a_vectorizar)
+            # Inicializamos el cliente oficial de Cohere
+            co = cohere.Client(cohere_api_key)
                 
-                # Convertimos la matriz de numpy a listas nativas de Python para la función coseno
-                vectores = embeddings_numpy.tolist() 
-                modelo_usado = "Fallback Local: all-MiniLM-L6-v2"
+            # Cohere procesa toda tu lista en un solo lote y en español
+            respuesta_cohere = co.embed(
+                texts=textos_a_vectorizar,
+                model='embed-multilingual-v3.0',
+                input_type='search_document'
+                )
+                
+                # Extraemos la matriz de vectores
+            vectores = respuesta_cohere.embeddings
+            modelo_usado = "Fallback: Cohere embed-multilingual-v3.0"
 
-            except Exception as error_local:
-                return {
-                    "error": "Caída total de servicios de búsqueda semántica.",
-                    "detalle": f"Gemini: {str(error_gemini)} | Local: {str(error_local)}"
-                }
+        except Exception as error_cohere:
+            return {
+                "error": "Caída total de servicios de búsqueda semántica (Gemini y Cohere).",
+                "detalle": f"Gemini: {str(error_gemini)} | Cohere: {str(error_cohere)}"
+            }
 
         vector_consulta = vectores[0]
         vectores_archivos = vectores[1:]
