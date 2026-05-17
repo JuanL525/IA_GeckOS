@@ -224,6 +224,7 @@ class ArchivoVirtual(BaseModel):
 class BusquedaRequest(BaseModel):
     consulta: str
     archivos: List[ArchivoVirtual]
+    test_mode: bool = False
 
 def similitud_coseno(vec1, vec2):
     dot_product = sum(x * y for x, y in zip(vec1, vec2))
@@ -256,15 +257,27 @@ def es_contenido_valido(contenido):
 @app.post("/buscar")
 def buscar_archivos(req: BusquedaRequest):
     inicio = time.time()
+
+    if req.test_mode:
+        time.sleep(1.0) 
+        return {
+            "mensaje": "Búsqueda híbrida completada usando MOCK",
+            "resultados": [],
+            "metricas": {"tiempo_respuesta_ms": 1000}
+        }
+    
     try:
         # ==========================================
         # FILTRO DE ARCHIVOS BASURA
         # ==========================================
-        archivos_limpios = [a for a in req.archivos if es_contenido_valido(a.contenido)]
+        archivos_limpios = [
+            a for a in req.archivos 
+            if a.contenido.strip() and es_contenido_valido(a.contenido)
+        ]
 
         if not archivos_limpios:
             return {
-                "mensaje": "No se encontraron archivos con contenido legible.",
+                "mensaje": "No se encontraron archivos con contenido legible o los archivos estaban vacíos.",
                 "resultados": [],
                 "metricas": {"tiempo_respuesta_ms": int((time.time() - inicio) * 1000)}
             }
@@ -386,10 +399,20 @@ def buscar_archivos(req: BusquedaRequest):
 class AnalisisRequest(BaseModel):
     texto: str
     accion: str 
+    test_mode: bool = False
 
 @app.post("/analizar-documento")
 def analizar_documento(req: AnalisisRequest):
     inicio = time.time()
+
+    if req.test_mode:
+        time.sleep(0.8) 
+        return {
+            "mensaje": f"Análisis completado: {req.accion} (MOCK)",
+            "modelo_ejecucion": "MOCK-LLM", 
+            "respuesta": {"resultado": "Texto procesado de prueba"},
+            "metricas": {"tiempo_respuesta_ms": 800}
+        }
     
     prompt_analisis = f"""
     Eres el procesador de texto avanzado (la "navaja suiza") del sistema GeckOS.
