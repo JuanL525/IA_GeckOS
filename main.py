@@ -14,6 +14,7 @@ from groq import Groq
 from rank_bm25 import BM25Okapi
 import cohere
 import re
+import string
 
 load_dotenv()
 
@@ -254,6 +255,16 @@ def es_contenido_valido(contenido):
         return False
     return True
 
+def es_texto_visible(contenido: str) -> bool:
+    if not contenido or not isinstance(contenido, str):
+        return False
+    # Remueve espacios, tabs, saltos de línea y caracteres no imprimibles
+    limpio = ''.join(c for c in contenido if c.isprintable()).strip()
+    if not limpio:
+        return False
+    # Al menos un carácter alfabético o numérico
+    return any(c.isalnum() for c in limpio)
+
 @app.post("/buscar")
 def buscar_archivos(req: BusquedaRequest):
     inicio = time.time()
@@ -270,17 +281,17 @@ def buscar_archivos(req: BusquedaRequest):
         # ==========================================
         # FILTRO DE ARCHIVOS BASURA
         # ==========================================
-        archivos_limpios = [
-            a for a in req.archivos 
-            if a.contenido.strip() and es_contenido_valido(a.contenido)
-        ]
-
-        if not archivos_limpios:
-            return {
-                "mensaje": "No se encontraron archivos con contenido legible o los archivos estaban vacíos.",
-                "resultados": [],
-                "metricas": {"tiempo_respuesta_ms": int((time.time() - inicio) * 1000)}
-            }
+        archivos_limpios = []
+        for a in req.archivos:
+        # 1) Contenido visible (no vacío, no solo símbolos)
+            if not es_texto_visible(a.contenido):
+                print(f"[FILTRO] Descartado archivo vacío/invisible: {a.nombre}")
+                continue
+        # 2) Validación de legibilidad (la que ya tienes)
+            if not es_contenido_valido(a.contenido):
+                print(f"[FILTRO] Descartado por basura/ilegible: {a.nombre}")
+                continue
+            archivos_limpios.append(a)
 
         # A partir de aquí, SIEMPRE usamos 'archivos_limpios', no 'req.archivos'
 
