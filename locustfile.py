@@ -4,34 +4,6 @@ class EstudianteGeckOS(HttpUser):
     # El estudiante piensa entre 1 y 3 segundos antes de hacer otra acción
     wait_time = between(1.0, 3.0)
 
-    @task(4) # Alta probabilidad: El estudiante usa mucho el chat
-    def probar_chat(self):
-        payload = {
-            "mensaje": "¿Me explicas qué es un framework?",
-            "test_mode": True  
-        }
-        with self.client.post("/chat", json=payload, catch_response=True) as response:
-            if response.status_code == 200:
-                response.success()
-            else:
-                response.failure(f"Falló chat: {response.status_code}")
-
-    @task(2) # Probabilidad media: Búsqueda de archivos
-    def probar_busqueda(self):
-        payload = {
-            "consulta": "universidad",
-            "archivos": [
-                {"id": "1", "nombre": "clases.txt", "contenido": "Tengo que ir a la facultad de ingeniería."},
-                {"id": "2", "nombre": "gastos.txt", "contenido": "Comprar pan y leche."}
-            ],
-            "test_mode": True
-        }
-        with self.client.post("/buscar", json=payload, catch_response=True) as response:
-            if response.status_code == 200:
-                response.success()
-            else:
-                response.failure(f"Falló búsqueda: {response.status_code}")
-
     @task(2) # Probabilidad media: Análisis de textos
     def probar_analisis(self):
         payload = {
@@ -44,15 +16,3 @@ class EstudianteGeckOS(HttpUser):
                 response.success()
             else:
                 response.failure(f"Falló análisis: {response.status_code}")
-
-    @task(1) # Baja probabilidad: Generar fondos consume más tiempo
-    def probar_generador_imagenes(self):
-        payload = {
-            "descripcion": "Un paisaje ciberpunk de Quito en el año 2077",
-            "test_mode": True  
-        }
-        with self.client.post("/generar-fondo", json=payload, catch_response=True) as response:
-            if response.status_code == 200:
-                response.success()
-            else:
-                response.failure(f"Falló imagen: {response.status_code}")

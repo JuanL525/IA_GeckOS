@@ -293,6 +293,13 @@ def buscar_archivos(req: BusquedaRequest):
                 continue
             archivos_limpios.append(a)
 
+        if not archivos_limpios:
+            return {
+                "mensaje": "No se encontraron archivos con contenido legible o los archivos estaban vacíos.",
+                "resultados": [],
+                "metricas": {"tiempo_respuesta_ms": int((time.time() - inicio) * 1000)}
+            }
+
         # A partir de aquí, SIEMPRE usamos 'archivos_limpios', no 'req.archivos'
 
         # ==========================================
