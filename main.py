@@ -389,7 +389,7 @@ def buscar_archivos(req: BusquedaRequest):
             puntaje_final = (puntajes_bm25_norm[i] * peso_lexico) + (similitud_semantica_norm * peso_semantico)
             porcentaje_final = round(puntaje_final * 100, 2)
 
-            if porcentaje_final >= 35.0:
+            if porcentaje_final >= 20.0:
                 resultados.append({
                     "id": archivo.id,
                     "nombre": archivo.nombre,
