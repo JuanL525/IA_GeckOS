@@ -60,16 +60,12 @@ class ChatRequest(BaseModel):
     mensaje: str
     test_mode: bool = False
 
-# --- ENDPOINT CHAT ---
 @app.post("/chat")
 def chat(req: ChatRequest):
     inicio = time.time()
 
-    # ==========================================
-    # INTERCEPTOR DE PRUEBAS DE CARGA (MOCK)
-    # ==========================================
     if req.test_mode:
-        time.sleep(1.5) # Simulamos 1.5 segundos de latencia de red de Google
+        time.sleep(1.5)  # Simula latencia de red en pruebas de carga
         fin = time.time()
         return {
             "respuesta": {
@@ -80,9 +76,6 @@ def chat(req: ChatRequest):
             }
         }
 
-    # ==========================================
-    # FLUJO NORMAL (PRODUCCIÓN)
-    # ==========================================
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return {"error": "GOOGLE_API_KEY no encontrada en .env"}
@@ -124,16 +117,12 @@ class FondoRequest(BaseModel):
     descripcion: str
     test_mode: bool = False
 
-# --- ENDPOINT FONDOS ---
 @app.post("/generar-fondo")
 def generar_fondo(req: FondoRequest):
     inicio = time.time()
 
-    # ==========================================
-    # INTERCEPTOR DE PRUEBAS DE CARGA (MOCK)
-    # ==========================================
     if req.test_mode:
-        time.sleep(4.5) # Simulamos 4.5 segundos, ya que la generación de imágenes es más lenta
+        time.sleep(4.5)  # Generación de imágenes es más lenta que el chat
         fin = time.time()
         # Pixel transparente 1x1 válido
         pixel_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -145,9 +134,6 @@ def generar_fondo(req: FondoRequest):
             }
         }
 
-    # ==========================================
-    # FLUJO NORMAL (PRODUCCIÓN)
-    # ==========================================
     try:
         hf_api_key = os.getenv("HUGGINGFACE_API_KEY")
         if not hf_api_key:
@@ -157,7 +143,7 @@ def generar_fondo(req: FondoRequest):
         modelo_usado = ""
 
         try:
-            # PLAN A: Intentar con FLUX.1-dev
+            # Plan A: FLUX.1-dev
             client = Client("black-forest-labs/FLUX.1-dev", token=hf_api_key)
             resultado = client.predict(
                 prompt=prompt_final,
@@ -175,7 +161,7 @@ def generar_fondo(req: FondoRequest):
         except Exception as error_flux:
             print(f"Plan A (FLUX) falló: {error_flux}. Iniciando Plan B (ERNIE)...")
             try:
-                # PLAN B: Respaldo con ERNIE-Image-Turbo
+                # Plan B: ERNIE-Image-Turbo (fallback)
                 client_fallback = Client("baidu/ERNIE-Image-Turbo", token=hf_api_key)
                 resultado_fallback = client_fallback.predict(
                     prompt=prompt_final,
@@ -278,16 +264,11 @@ def buscar_archivos(req: BusquedaRequest):
         }
     
     try:
-        # ==========================================
-        # FILTRO DE ARCHIVOS BASURA
-        # ==========================================
         archivos_limpios = []
         for a in req.archivos:
-        # 1) Contenido visible (no vacío, no solo símbolos)
             if not es_texto_visible(a.contenido):
                 print(f"[FILTRO] Descartado archivo vacío/invisible: {a.nombre}")
                 continue
-        # 2) Validación de legibilidad (la que ya tienes)
             if not es_contenido_valido(a.contenido):
                 print(f"[FILTRO] Descartado por basura/ilegible: {a.nombre}")
                 continue
@@ -300,12 +281,7 @@ def buscar_archivos(req: BusquedaRequest):
                 "metricas": {"tiempo_respuesta_ms": int((time.time() - inicio) * 1000)}
             }
 
-        # A partir de aquí, SIEMPRE usamos 'archivos_limpios', no 'req.archivos'
-
-        # ==========================================
-        # FASE 1: ANÁLISIS LÉXICO (BM25)
-        # ==========================================
-        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in archivos_limpios]  # <-- CORREGIDO
+        corpus_tokenizado = [f"{a.nombre} {a.contenido}".lower().split(" ") for a in archivos_limpios]
         bm25 = BM25Okapi(corpus_tokenizado)
         consulta_tokenizada = req.consulta.lower().split(" ")
 
@@ -314,15 +290,12 @@ def buscar_archivos(req: BusquedaRequest):
 
         puntajes_bm25_norm = [score / max_bm25 for score in puntajes_bm25]
 
-        # ==========================================
-        # FASE 2: ANÁLISIS SEMÁNTICO (CON FALLBACK)
-        # ==========================================
         textos_a_vectorizar = [req.consulta] + [f"{a.nombre}. {a.contenido}" for a in archivos_limpios]
         vectores = []
         modelo_usado = ""
 
         try:
-            # --- PLAN A: GEMINI ---
+            # Plan A: Gemini embeddings
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
                 raise Exception("GOOGLE_API_KEY no encontrada")
@@ -338,14 +311,13 @@ def buscar_archivos(req: BusquedaRequest):
         except Exception as error_gemini:
             print(f"Plan A (Gemini) falló: {error_gemini}. Activando Plan B (Cohere)...")
             try:
-                # --- PLAN B: COHERE ---
+                # Plan B: Cohere embeddings (fallback)
                 cohere_api_key = os.getenv("COHERE_API_KEY")
                 if not cohere_api_key:
                     raise Exception("COHERE_API_KEY no encontrada en .env")
 
                 co = cohere.Client(cohere_api_key)
 
-                # Vectorizar consulta
                 resp_consulta = co.embed(
                     texts=[req.consulta],
                     model='embed-multilingual-v3.0',
@@ -353,8 +325,7 @@ def buscar_archivos(req: BusquedaRequest):
                 )
                 vector_consulta = resp_consulta.embeddings[0]
 
-                # Vectorizar archivos LIMPIOS (corregido también)
-                textos_archivos = [f"{a.nombre.replace('.txt', '')}. {a.contenido}" for a in archivos_limpios]  # <-- USAMOS archivos_limpios
+                textos_archivos = [f"{a.nombre.replace('.txt', '')}. {a.contenido}" for a in archivos_limpios]
                 resp_archivos = co.embed(
                     texts=textos_archivos,
                     model='embed-multilingual-v3.0',
@@ -371,13 +342,9 @@ def buscar_archivos(req: BusquedaRequest):
                     "detalle": f"Gemini: {str(error_gemini)} | Cohere: {str(error_cohere)}"
                 }
 
-        # Separar vector de consulta y vectores de archivos
         vector_consulta = vectores[0]
         vectores_archivos = vectores[1:]
 
-        # ==========================================
-        # FASE 3: FUSIÓN HÍBRIDA Y FILTRO DE RELEVANCIA
-        # ==========================================
         peso_lexico = 0.3
         peso_semantico = 0.7
         resultados = []
@@ -450,20 +417,11 @@ def analizar_documento(req: AnalisisRequest):
     modelo_usado = ""
     respuesta_ia_json = {}
 
-    # ==========================================
-    # ENRUTADOR INTELIGENTE (ROUTER)
-    # ==========================================
-    # Convertimos la acción a minúsculas para buscar coincidencias fácilmente
     accion_lower = req.accion.lower()
     palabras_traduccion = ["traducir", "traduce", "traducción", "translate", "idioma", "inglés", "english"]
-    
-    # Si la acción contiene alguna de las palabras clave, forzamos el uso de Gemini
     forzar_gemini = any(palabra in accion_lower for palabra in palabras_traduccion)
 
     if not forzar_gemini:
-        # ==========================================
-        # RUTA 1: TAREAS GENERALES -> GROQ (Velocidad)
-        # ==========================================
         try:
             groq_api_key = os.getenv("GROQ_API_KEY")
             if not groq_api_key:
@@ -481,13 +439,10 @@ def analizar_documento(req: AnalisisRequest):
 
         except Exception as error_groq:
             print(f"Groq falló ({error_groq}). Redirigiendo a Gemini...")
-            forzar_gemini = True # Si Groq falla, activamos el switch para que el bloque de Gemini lo rescate
+            forzar_gemini = True
 
-    # OJO: Usamos 'if' y no 'else' porque si Groq falló arriba, forzar_gemini ahora es True
+    # 'if' y no 'else': Groq puede haber activado forzar_gemini en el bloque anterior
     if forzar_gemini:
-        # ==========================================
-        # RUTA 2: TRADUCCIONES O FALLBACK -> GEMINI (Precisión)
-        # ==========================================
         try:
             api_key = os.getenv("GOOGLE_API_KEY")
             if not api_key:
@@ -503,8 +458,7 @@ def analizar_documento(req: AnalisisRequest):
                 )
             )
             respuesta_ia_json = json.loads(response_gemini.text)
-            
-            # Etiquetamos dinámicamente si fue por enrutamiento o por emergencia
+
             if "traduc" in accion_lower or "inglés" in accion_lower or "english" in accion_lower:
                 modelo_usado = "Gemini 2.5 Flash (Traductor Dedicado)"
             else:
